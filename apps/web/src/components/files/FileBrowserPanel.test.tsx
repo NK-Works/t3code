@@ -105,6 +105,8 @@ const harness = vi.hoisted(() => ({
   model: null as FakeFileTreeModel | null,
   entries: [] as ProjectEntry[],
   loadCalls: [] as string[],
+  failing: new Set<string>(),
+  error: null as string | null,
   gates: new Map<string, { promise: Promise<void>; release: () => void }>(),
   onOpenFile: vi.fn<(path: string) => void>(),
   children: {
@@ -136,6 +138,12 @@ vi.mock("./useDirectoryEntries", () => {
     // in flight.
     const gate = harness.gates.get(directoryPath);
     if (gate) await gate.promise;
+    // The real hook reports a failed listing through `error` and leaves the
+    // folder's children unloaded, rather than rejecting.
+    if (harness.failing.has(directoryPath)) {
+      harness.error = "Unable to load folder.";
+      return;
+    }
     for (const entry of harness.children[directoryPath] ?? []) {
       if (!harness.entries.some((existing) => existing.path === entry.path)) {
         harness.entries.push(entry);
@@ -148,7 +156,7 @@ vi.mock("./useDirectoryEntries", () => {
       load,
       refresh: () => {},
       ready: true,
-      error: null,
+      error: harness.error,
       isPending: false,
     }),
   };
@@ -249,6 +257,8 @@ beforeEach(() => {
   harness.entries.push(...harness.children[""]!);
   harness.loadCalls = [];
   harness.gates.clear();
+  harness.failing.clear();
+  harness.error = null;
   harness.onOpenFile.mockReset();
   renderer = null;
 });
@@ -376,6 +386,24 @@ describe("FileBrowserPanel expansion persistence", () => {
     expect(harness.loadCalls).toContain("gone");
     expect(isExpanded("apps/")).toBe(true);
     expect(JSON.parse(window.localStorage.getItem(storageKey) ?? "null")).toEqual(["apps/"]);
+  });
+
+  it("keeps stored folders whose listing failed to load", async () => {
+    // A transient read failure leaves "apps/web/" unrestored. Treating that as
+    // "the folder is gone" would erase expansion the user still has.
+    harness.failing.add("apps");
+    window.localStorage.setItem(storageKey, JSON.stringify(["apps/", "apps/web/"]));
+    await act(async () => {
+      renderer = create(panelElement());
+    });
+    await settle();
+
+    expect(isExpanded("apps/")).toBe(true);
+    expect(isExpanded("apps/web/")).toBe(false);
+    expect(JSON.parse(window.localStorage.getItem(storageKey) ?? "null")).toEqual([
+      "apps/",
+      "apps/web/",
+    ]);
   });
 
   it("stays closed when storage is empty", async () => {

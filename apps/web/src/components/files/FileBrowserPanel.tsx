@@ -365,10 +365,13 @@ export default function FileBrowserPanel({
         item.expand();
         pendingRestore.delete(path);
       }
-      if (!restoreLoadsSettled) return;
-      // Every ancestor load resolved, so anything still queued never became a
-      // row: that folder is gone, and restoring it on every later mount would
-      // keep it in storage forever.
+      if (!restoreLoadsSettled || error !== null) return;
+      // Every ancestor load resolved without a reported error, so anything
+      // still queued never became a row: that folder is gone, and restoring it
+      // on every later mount would keep it in storage forever. A folder that
+      // really was deleted fails to load as an unreachable path, which the
+      // hook does not report, so it still prunes; a reachable folder that
+      // failed to read is reported here and keeps its stored state instead.
       const droppedQueuedPaths = pendingRestore.size;
       pendingRestore.clear();
       const pruned = pruneExpandedPaths([...expandedPathsRef.current], new Set(directoryPaths));
@@ -406,7 +409,7 @@ export default function FileBrowserPanel({
       cancelled = true;
       unsubscribe();
     };
-  }, [directoryPaths, expansionStorageKey, load, model, restoreLoadsSettled]);
+  }, [directoryPaths, error, expansionStorageKey, load, model, restoreLoadsSettled]);
   useEffect(() => {
     model.setGitStatus(
       entries

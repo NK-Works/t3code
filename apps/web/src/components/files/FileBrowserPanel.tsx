@@ -24,6 +24,14 @@ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import {
+  expandedPathAncestors,
+  fileTreeExpansionStorageKey,
+  pruneExpandedPaths,
+  readPersistedExpandedPaths,
+  sortExpandedPathsParentFirst,
+  writePersistedExpandedPaths,
+} from "./fileTreeExpansionPersistence";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
@@ -299,30 +307,101 @@ export default function FileBrowserPanel({
     setQuery("");
     search.close();
   };
-  const expandedPathsRef = useRef(new Set<string>());
+  const expansionStorageKey = useMemo(
+    () => fileTreeExpansionStorageKey(environmentId, cwd),
+    [cwd, environmentId],
+  );
+  // The panel remounts per workspace (keyed by environmentId + cwd at the call
+  // site), so seeding the shadow set from storage once per mount restores the
+  // previous session instead of starting collapsed.
+  const [initialExpandedPaths] = useState(() => readPersistedExpandedPaths(expansionStorageKey));
+  const expandedPathsRef = useRef(new Set(initialExpandedPaths));
+  // While a restore is in flight its rows are still collapsed, which is
+  // indistinguishable from the user collapsing them; hold off pruning until
+  // the ancestor loads settle so not-yet-loaded deep paths survive.
+  const restoreStateRef = useRef({ done: initialExpandedPaths.length === 0 });
+  const [restoreLoadsSettled, setRestoreLoadsSettled] = useState(initialExpandedPaths.length === 0);
   useEffect(() => {
-    const currentPaths = new Set(directoryPaths);
-    for (const path of expandedPathsRef.current) {
-      if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
+    const persisted = sortExpandedPathsParentFirst(readPersistedExpandedPaths(expansionStorageKey));
+    restoreStateRef.current.done = persisted.length === 0;
+    // The settled flag initialises correctly per mount (see useState above);
+    // only the async completion below flips it, keeping setState out of the
+    // synchronous effect body.
+    if (persisted.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    const toLoad: string[] = [""];
+    for (const path of persisted) {
+      for (const ancestor of expandedPathAncestors(path)) {
+        const directory = ancestor.replace(/\/$/, "");
+        if (!toLoad.includes(directory)) toLoad.push(directory);
+      }
+    }
+    void (async () => {
+      for (const directory of toLoad) {
+        await load(directory);
+        if (cancelled) return;
+      }
+      if (!cancelled) setRestoreLoadsSettled(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [expansionStorageKey, load]);
+  useEffect(() => {
+    const restore = restoreStateRef.current;
+    let cancelled = false;
+    if (!restore.done) {
+      const latestDirectoryPaths = new Set(directoryPaths);
+      // Rows register in the path-sync effect below this one, so expand after
+      // this commit's effects have run and the rows exist.
+      queueMicrotask(() => {
+        if (cancelled || restore.done) return;
+        for (const path of sortExpandedPathsParentFirst(
+          readPersistedExpandedPaths(expansionStorageKey),
+        )) {
+          const item = model.getItem(path);
+          if (item && "expand" in item) item.expand();
+        }
+        if (!restoreLoadsSettled) return;
+        expandedPathsRef.current = new Set(
+          pruneExpandedPaths([...expandedPathsRef.current], latestDirectoryPaths),
+        );
+        writePersistedExpandedPaths(expansionStorageKey, expandedPathsRef.current);
+        restore.done = true;
+      });
+    } else {
+      const currentPaths = new Set(directoryPaths);
+      for (const path of expandedPathsRef.current) {
+        if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
+      }
     }
     const loadExpanded = () => {
       if (model.isSearchOpen()) return;
+      let changed = false;
       for (const path of directoryPaths) {
         const item = model.getItem(path);
         if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
           if (!expandedPathsRef.current.has(path)) {
             expandedPathsRef.current.add(path);
+            changed = true;
             void load(path.replace(/\/$/, ""));
           }
-        } else {
+        } else if (restore.done) {
           if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
-          expandedPathsRef.current.delete(path);
+          if (expandedPathsRef.current.delete(path)) changed = true;
         }
       }
+      if (changed) writePersistedExpandedPaths(expansionStorageKey, expandedPathsRef.current);
     };
     loadExpanded();
-    return model.subscribe(loadExpanded);
-  }, [directoryPaths, load, model]);
+    const unsubscribe = model.subscribe(loadExpanded);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [directoryPaths, expansionStorageKey, load, model, restoreLoadsSettled]);
   useEffect(() => {
     model.setGitStatus(
       entries

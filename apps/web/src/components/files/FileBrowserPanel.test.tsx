@@ -93,10 +93,19 @@ class FakeFileTreeModel {
   scrollToPath(): void {}
 }
 
+function createGate() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
 const harness = vi.hoisted(() => ({
   model: null as FakeFileTreeModel | null,
   entries: [] as ProjectEntry[],
   loadCalls: [] as string[],
+  gates: new Map<string, { promise: Promise<void>; release: () => void }>(),
   onOpenFile: vi.fn<(path: string) => void>(),
   children: {
     "": [
@@ -123,6 +132,10 @@ vi.mock("./useDirectoryEntries", () => {
   // every test-renderer update would retrigger load effects.
   const load = async (directoryPath: string) => {
     harness.loadCalls.push(directoryPath);
+    // `gated` holds a listing open so a test can act while a restore is still
+    // in flight.
+    const gate = harness.gates.get(directoryPath);
+    if (gate) await gate.promise;
     for (const entry of harness.children[directoryPath] ?? []) {
       if (!harness.entries.some((existing) => existing.path === entry.path)) {
         harness.entries.push(entry);
@@ -194,10 +207,11 @@ vi.mock("@t3tools/shared/composerTrigger", () => ({ serializeComposerFileLink: (
 vi.mock("lucide-react", () => ({ ChevronsDownUpIcon: () => null, ChevronsUpDownIcon: () => null }));
 
 import FileBrowserPanel from "./FileBrowserPanel";
+import { fileTreeExpansionStorageKey } from "./fileTreeExpansionPersistence";
 
 const environmentId = EnvironmentId.make("env-1");
 const cwd = "/workspace";
-const storageKey = `t3code.fileTreeExpanded:${environmentId}:${cwd}`;
+const storageKey = fileTreeExpansionStorageKey(environmentId, cwd);
 
 let renderer: ReactTestRenderer | null = null;
 
@@ -234,6 +248,7 @@ beforeEach(() => {
   harness.entries.length = 0;
   harness.entries.push(...harness.children[""]!);
   harness.loadCalls = [];
+  harness.gates.clear();
   harness.onOpenFile.mockReset();
   renderer = null;
 });
@@ -319,6 +334,36 @@ describe("FileBrowserPanel expansion persistence", () => {
     });
     await settle();
     expect(JSON.parse(window.localStorage.getItem(storageKey) ?? "null")).toEqual([]);
+  });
+
+  it("keeps a folder the user collapses while the restore is still loading", async () => {
+    // "apps/web" never finishes loading, so the restore stays in flight while
+    // the user closes "apps/" again.
+    const gate = createGate();
+    harness.gates.set("apps/web", gate);
+    window.localStorage.setItem(storageKey, JSON.stringify(["apps/", "apps/web/"]));
+    await act(async () => {
+      renderer = create(panelElement());
+    });
+    await settle();
+    expect(isExpanded("apps/")).toBe(true);
+
+    await act(async () => {
+      harness.model?.getItem("apps/")?.collapse();
+    });
+    await settle();
+    expect(isExpanded("apps/")).toBe(false);
+
+    await act(async () => {
+      gate.release();
+    });
+    await settle();
+
+    // A later restore pass must not reopen what the user just closed, while the
+    // folder that finished loading still restores.
+    expect(isExpanded("apps/")).toBe(false);
+    expect(JSON.parse(window.localStorage.getItem(storageKey) ?? "null")).toEqual(["apps/web/"]);
+    expect(isExpanded("apps/web/")).toBe(true);
   });
 
   it("prunes stored paths that no longer exist", async () => {

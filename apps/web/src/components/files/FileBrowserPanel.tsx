@@ -316,14 +316,14 @@ export default function FileBrowserPanel({
   // previous session instead of starting collapsed.
   const [initialExpandedPaths] = useState(() => readPersistedExpandedPaths(expansionStorageKey));
   const expandedPathsRef = useRef(new Set(initialExpandedPaths));
-  // While a restore is in flight its rows are still collapsed, which is
-  // indistinguishable from the user collapsing them; hold off pruning until
-  // the ancestor loads settle so not-yet-loaded deep paths survive.
-  const restoreStateRef = useRef({ done: initialExpandedPaths.length === 0 });
+  // Stored folders that still owe their first expand(). Rows only exist once
+  // their ancestors load, so restore drains this queue as rows appear; a folder
+  // leaves the queue the moment it is expanded, which is what makes a later
+  // collapse by the user stick instead of being undone by the next replay.
+  const pendingRestoreRef = useRef(new Set(initialExpandedPaths));
   const [restoreLoadsSettled, setRestoreLoadsSettled] = useState(initialExpandedPaths.length === 0);
   useEffect(() => {
     const persisted = sortExpandedPathsParentFirst(readPersistedExpandedPaths(expansionStorageKey));
-    restoreStateRef.current.done = persisted.length === 0;
     // The settled flag initialises correctly per mount (see useState above);
     // only the async completion below flips it, keeping setState out of the
     // synchronous effect body.
@@ -350,33 +350,32 @@ export default function FileBrowserPanel({
     };
   }, [expansionStorageKey, load]);
   useEffect(() => {
-    const restore = restoreStateRef.current;
+    const pendingRestore = pendingRestoreRef.current;
     let cancelled = false;
-    if (!restore.done) {
-      const latestDirectoryPaths = new Set(directoryPaths);
-      // Rows register in the path-sync effect below this one, so expand after
-      // this commit's effects have run and the rows exist.
-      queueMicrotask(() => {
-        if (cancelled || restore.done) return;
-        for (const path of sortExpandedPathsParentFirst(
-          readPersistedExpandedPaths(expansionStorageKey),
-        )) {
-          const item = model.getItem(path);
-          if (item && "expand" in item) item.expand();
-        }
-        if (!restoreLoadsSettled) return;
-        expandedPathsRef.current = new Set(
-          pruneExpandedPaths([...expandedPathsRef.current], latestDirectoryPaths),
-        );
-        writePersistedExpandedPaths(expansionStorageKey, expandedPathsRef.current);
-        restore.done = true;
-      });
-    } else {
-      const currentPaths = new Set(directoryPaths);
-      for (const path of expandedPathsRef.current) {
-        if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
+    // Rows register in the path-sync effect below this one, so expand stored
+    // folders in a microtask: by then this commit's rows exist. Draining the
+    // queue (rather than replaying storage) is what makes a collapse the user
+    // makes during restore stick: the path has left the queue, so no later
+    // pass reopens it.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      for (const path of sortExpandedPathsParentFirst([...pendingRestore])) {
+        const item = model.getItem(path);
+        if (!item || !("expand" in item)) continue;
+        item.expand();
+        pendingRestore.delete(path);
       }
-    }
+      if (!restoreLoadsSettled) return;
+      // Every ancestor load resolved, so anything still queued never became a
+      // row: that folder is gone, and restoring it on every later mount would
+      // keep it in storage forever.
+      const droppedQueuedPaths = pendingRestore.size;
+      pendingRestore.clear();
+      const pruned = pruneExpandedPaths([...expandedPathsRef.current], new Set(directoryPaths));
+      if (droppedQueuedPaths === 0 && pruned.length === expandedPathsRef.current.size) return;
+      expandedPathsRef.current = new Set(pruned);
+      writePersistedExpandedPaths(expansionStorageKey, expandedPathsRef.current);
+    });
     const loadExpanded = () => {
       if (model.isSearchOpen()) return;
       let changed = false;
@@ -388,9 +387,15 @@ export default function FileBrowserPanel({
             changed = true;
             void load(path.replace(/\/$/, ""));
           }
-        } else if (restore.done) {
-          if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
-          if (expandedPathsRef.current.delete(path)) changed = true;
+        } else if (item?.isDirectory()) {
+          // The row exists and is collapsed, so this is the user closing a
+          // folder. Honour it and stop restoring it.
+          pendingRestore.delete(path);
+          if (expandedPathsRef.current.has(path)) {
+            expandedPathsRef.current.delete(path);
+            setExpandAll(false);
+            changed = true;
+          }
         }
       }
       if (changed) writePersistedExpandedPaths(expansionStorageKey, expandedPathsRef.current);

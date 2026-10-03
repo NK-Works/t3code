@@ -18,9 +18,27 @@ beforeEach(() => {
 
 describe("file tree expansion persistence", () => {
   it("keys storage by environment and cwd", () => {
-    expect(storageKey).toBe("t3code.fileTreeExpanded:env-1:/workspace");
+    expect(storageKey).toBe("t3code.fileTreeExpanded.env-1__2f_workspace");
     expect(fileTreeExpansionStorageKey("env-1", "/other")).not.toBe(storageKey);
     expect(fileTreeExpansionStorageKey("env-2", "/workspace")).not.toBe(storageKey);
+  });
+
+  it("keeps delimiter-containing workspaces on distinct keys", () => {
+    // Plain concatenation maps both of these onto "...:a:b:c" and would share
+    // their expanded state.
+    expect(fileTreeExpansionStorageKey("a", "b:c")).not.toBe(
+      fileTreeExpansionStorageKey("a:b", "c"),
+    );
+    // "_" is the separator, so a literal underscore must not be able to pose
+    // as one.
+    expect(fileTreeExpansionStorageKey("a_b", "c")).not.toBe(
+      fileTreeExpansionStorageKey("a", "b_c"),
+    );
+  });
+
+  it("builds keys inside the character set both storages accept", () => {
+    const key = fileTreeExpansionStorageKey("env:with:colons", "/home/user/my repo (copy)/ünïcode");
+    expect(key).toMatch(/^[\w.-]+$/);
   });
 
   it("round-trips the expanded set and starts empty when missing", () => {

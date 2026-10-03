@@ -42,9 +42,26 @@ beforeEach(() => {
 describe("mobile file tree expansion persistence", () => {
   it("keys storage by environment and cwd", () => {
     const key = fileTreeExpansionKey("env-1", "/workspace");
-    expect(key).toBe("t3code.fileTreeExpanded:env-1:/workspace");
+    expect(key).toBe("t3code.fileTreeExpanded.env-1__2f_workspace");
     expect(fileTreeExpansionKey("env-1", "/other")).not.toBe(key);
     expect(fileTreeExpansionKey("env-2", "/workspace")).not.toBe(key);
+  });
+
+  it("keeps delimiter-containing workspaces on distinct keys", () => {
+    // Plain concatenation maps both of these onto "...:a:b:c" and would share
+    // their expanded state.
+    expect(fileTreeExpansionKey("a", "b:c")).not.toBe(fileTreeExpansionKey("a:b", "c"));
+    // "_" is the separator, so a literal underscore must not be able to pose
+    // as one.
+    expect(fileTreeExpansionKey("a_b", "c")).not.toBe(fileTreeExpansionKey("a", "b_c"));
+  });
+
+  it("builds keys SecureStore accepts", () => {
+    // expo-secure-store rejects any key outside /^[\w.-]+$/, so an unescaped
+    // environment id or absolute path makes every write fail.
+    const key = fileTreeExpansionKey("env:with:colons", "/home/user/my repo (copy)/ünïcode");
+    expect(key).toMatch(/^[\w.-]+$/);
+    expect(fileTreeExpansionKey("env-1", "/workspace")).toMatch(/^[\w.-]+$/);
   });
 
   it("sanitizes stored lists", () => {
@@ -105,5 +122,23 @@ describe("mobile file tree expansion persistence", () => {
     secureStore.getItemAsync.mockClear();
     await expect(loadPersistedExpandedPaths(key)).resolves.toEqual(["warm"]);
     expect(secureStore.getItemAsync).not.toHaveBeenCalled();
+  });
+
+  it("keeps a save that lands while the disk read is in flight", async () => {
+    const key = fileTreeExpansionKey("env-race", "/workspace");
+    await secureStore.setItemAsync(key, JSON.stringify(["stale"]));
+    let releaseRead: (() => void) | undefined;
+    secureStore.getItemAsync.mockImplementationOnce(
+      () =>
+        new Promise<string | null>((resolve) => {
+          releaseRead = () => resolve(JSON.stringify(["stale"]));
+        }),
+    );
+    const pendingRead = loadPersistedExpandedPaths(key);
+    // The user toggles a folder while SecureStore is still answering.
+    savePersistedExpandedPaths(key, ["fresh"]);
+    releaseRead?.();
+    await expect(pendingRead).resolves.toEqual(["fresh"]);
+    expect(readCachedExpandedPaths(key)).toEqual(["fresh"]);
   });
 });

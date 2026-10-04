@@ -369,6 +369,13 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
 function markdownFileLinkLabelPath(label: string): string | null {
   // A `file:` URL label carries the destination the same way an href does.
   if (/^file:/i.test(label)) {
+    // A query string or non-position fragment is authored prose, not part of
+    // the destination: parseFileUrlHref drops both before comparison.
+    const markerIndex = label.search(/[?#]/);
+    if (markerIndex >= 0) {
+      const marker = label.slice(markerIndex);
+      if (marker.startsWith("?") || !POSITION_HASH_PATTERN.test(marker)) return null;
+    }
     const fileUrl = parseFileUrlHref(label);
     if (!fileUrl) return null;
     const position = splitFilePathPosition(fileUrl.path, fileUrl.hash);

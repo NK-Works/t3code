@@ -230,6 +230,14 @@ describe("isMarkdownFileLinkLabel", () => {
     (label) => expect(isMarkdownFileLinkLabel(label, "/repo/example.ts")).toBe(false),
   );
 
+  it.each([
+    "file:///repo/example.ts? Start here",
+    "file:///repo/example.ts#section",
+    "file:///repo/example.ts?x=1#L12",
+  ])("keeps query and fragment prose in file: labels %s descriptive", (label) =>
+    expect(isMarkdownFileLinkLabel(label, "/repo/example.ts")).toBe(false),
+  );
+
   it("returns false when the destination is not a file link", () => {
     expect(isMarkdownFileLinkLabel("Docs", "https://example.com/docs")).toBe(false);
   });

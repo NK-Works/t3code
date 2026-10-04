@@ -29,6 +29,53 @@ export function reloadOnceForChunkLoadError(
   return true;
 }
 
+// Vite emits `vite:preloadError` for intent preloads, but the initial
+// `router.load()` (and other cold dynamic imports) can reject with a plain
+// TypeError that lands in the route error boundary instead:
+// "Failed to fetch dynamically imported module: .../assets/settings-….js".
+// After a deploy or desktop channel switch the hashed chunk is stale, so one
+// guarded reload picks up the fresh index.html just like the preload path.
+const CHUNK_LOAD_ERROR_PATTERNS = [
+  "Failed to fetch dynamically imported module",
+  "Importing a module script failed",
+  "Loading chunk",
+  "Loading CSS chunk",
+];
+
+const MAX_CHUNK_ERROR_CAUSE_DEPTH = 5;
+
+/** Whether the error (or anything in its cause chain) is a stale split-chunk load failure. */
+export function isChunkLoadError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth <= MAX_CHUNK_ERROR_CAUSE_DEPTH && current != null; depth += 1) {
+    const message =
+      typeof current === "string" ? current : current instanceof Error ? current.message : null;
+    if (
+      typeof message === "string" &&
+      CHUNK_LOAD_ERROR_PATTERNS.some((pattern) => message.includes(pattern))
+    ) {
+      return true;
+    }
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return false;
+}
+
+/**
+ * Route-error-boundary and boot counterpart to `reloadOnceForChunkLoadError`:
+ * reloads at most once per failure streak when the error is a stale chunk,
+ * and leaves every other error (without consuming the single reload) to the
+ * normal error paths.
+ */
+export function reloadOnceForRouteChunkError(
+  error: unknown,
+  getStorage: () => Storage = () => window.sessionStorage,
+  reload: () => void = () => window.location.reload(),
+): boolean {
+  if (!isChunkLoadError(error)) return false;
+  return reloadOnceForChunkLoadError(getStorage, reload);
+}
+
 /** Clears the guard after a successful boot so a later stale deploy can reload again. */
 export function clearChunkReloadGuard(getStorage: () => Storage = () => window.sessionStorage) {
   try {

@@ -13,7 +13,11 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
-import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import {
+  clearChunkReloadGuard,
+  reloadOnceForChunkLoadError,
+  reloadOnceForRouteChunkError,
+} from "./lib/chunkReloadGuard";
 
 prepareProviderAuthDelivery();
 
@@ -83,5 +87,10 @@ export const startup = Promise.all([
   .catch((error: unknown) => {
     // Let the bootstrap entry show the error unless a reload is already scheduled.
     if (reloadScheduled) return;
+    // The initial route's chunk can be stale (deploy or desktop channel
+    // switch) and reject router.load() outright with a plain dynamic-import
+    // TypeError that never fires `vite:preloadError`. Recover with the same
+    // guarded reload instead of leaving a dead screen.
+    if (reloadOnceForRouteChunkError(error)) return;
     throw error;
   });

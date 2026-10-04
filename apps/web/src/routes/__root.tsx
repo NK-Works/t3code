@@ -80,6 +80,7 @@ import {
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+import { reloadOnceForRouteChunkError } from "../lib/chunkReloadGuard";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -376,10 +377,27 @@ function HostedStaticEnvironmentBootstrap() {
 
 function RootRouteErrorView({ error }: ErrorComponentProps) {
   const router = useRouter();
+  // A stale split chunk (deploy or desktop channel switch underfoot) lands in
+  // this boundary instead of the `vite:preloadError` path in main.tsx.
+  // Recover with the same single guarded reload; a persistent failure returns
+  // false and falls through to the error report below, so this cannot loop.
+  const [reloadingStaleChunk] = useState(() => reloadOnceForRouteChunkError(error));
   const message = errorMessage(error);
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
   const report = useMemo(() => errorReport(error, pathname), [error, pathname]);
+
+  if (reloadingStaleChunk) {
+    return (
+      <StandalonePage tone="brand">
+        <StandalonePageHeader
+          eyebrow={APP_DISPLAY_NAME}
+          title="Updating app…"
+          description="The app changed in the background. Reloading to load the latest version."
+        />
+      </StandalonePage>
+    );
+  }
 
   return (
     <StandalonePage tone="error">

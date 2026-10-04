@@ -344,3 +344,52 @@ export function workspaceRelativeFilePath(
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
   return normalizedPath.slice(normalizedRoot.length + 1);
 }
+
+/**
+ * Decides whether a markdown link label already names its file destination, in
+ * which case renderers collapse it to a filename chip. Anything else is
+ * authored prose the sentence needs, so renderers keep the label text and
+ * attach the destination beside it instead of replacing it.
+ */
+export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
+  const trimmed = label.trim();
+  if (trimmed.length === 0) return true;
+  const target = parseMarkdownFileLink(href);
+  if (!target) return false;
+  const labelPath = markdownFileLinkLabelPath(trimmed);
+  if (labelPath === null) return false;
+  // Windows paths compare case-insensitively, matching workspaceRelativeFilePath.
+  const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(target.path));
+  const normalize = (value: string) => (caseInsensitive ? value.toLowerCase() : value);
+  const path = normalize(labelPath);
+  const targetPath = normalize(target.path.replaceAll("\\", "/").replace(/([^/:])\/+$/, "$1"));
+  return path === targetPath || targetPath.endsWith(`/${path}`);
+}
+
+function markdownFileLinkLabelPath(label: string): string | null {
+  // A `file:` URL label carries the destination the same way an href does.
+  if (/^file:/i.test(label)) {
+    const fileUrl = parseFileUrlHref(label);
+    if (!fileUrl) return null;
+    const position = splitFilePathPosition(fileUrl.path, fileUrl.hash);
+    return normalizeLabelPath(position.path);
+  }
+  // Only a `#L...` anchor is position evidence. Any other fragment, like a
+  // query string, is authored prose rather than part of the destination.
+  const hashIndex = label.indexOf("#");
+  if (hashIndex >= 0 && !POSITION_HASH_PATTERN.test(label.slice(hashIndex))) return null;
+  const withoutAnchor = hashIndex >= 0 ? label.slice(0, hashIndex) : label;
+  return normalizeLabelPath(splitFilePathPosition(safeDecodeURIComponent(withoutAnchor)).path);
+}
+
+function normalizeLabelPath(path: string): string {
+  return path
+    .replaceAll("\\", "/")
+    .replace(/^\.\//, "")
+    .replace(/([^/:])\/+$/, "$1");
+}
+
+/** Escapes a link label so copying it re-parses as the same link. */
+export function escapeMarkdownLinkLabel(label: string): string {
+  return label.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+}

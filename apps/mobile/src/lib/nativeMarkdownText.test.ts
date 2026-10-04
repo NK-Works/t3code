@@ -125,16 +125,10 @@ describe("nativeMarkdownTextRuns", () => {
     ]);
   });
 
-  it("normalizes external and file links for native presentation", () => {
+  it("preserves descriptive file-link labels beside the destination chip", () => {
     const node: MarkdownNode = {
       type: "paragraph",
       children: [
-        {
-          type: "link",
-          href: "https://example.com/docs",
-          children: [{ type: "text", content: "Docs" }],
-        },
-        { type: "text", content: " " },
         {
           type: "link",
           href: "file:///repo/README.md#L12",
@@ -145,15 +139,126 @@ describe("nativeMarkdownTextRuns", () => {
 
     expect(nativeMarkdownTextRuns(node)).toEqual([
       {
-        text: "Docs",
-        href: "https://example.com/docs",
-        externalHost: "example.com",
+        text: "ignored label",
+        href: "file:///repo/README.md#L12",
       },
-      { text: " " },
+      {
+        text: " (README.md:12)",
+        href: "file:///repo/README.md#L12",
+        fileIcon: "markdown",
+        sourceText: "[ignored label](<file:///repo/README.md#L12>)",
+      },
+    ]);
+  });
+
+  it("keeps filename file-link labels compact", () => {
+    const node: MarkdownNode = {
+      type: "paragraph",
+      children: [
+        {
+          type: "link",
+          href: "file:///repo/README.md#L12",
+          children: [{ type: "text", content: "README.md:12" }],
+        },
+      ],
+    };
+
+    expect(nativeMarkdownTextRuns(node)).toEqual([
       {
         text: "README.md:12",
         href: "file:///repo/README.md#L12",
         fileIcon: "markdown",
+      },
+    ]);
+  });
+
+  it("preserves descriptive file-link formatting and keeps filename links compact", () => {
+    const href = "/repo/src/example.ts:12";
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href,
+            children: [
+              { type: "bold", children: [{ type: "text", content: "validates" }] },
+              { type: "text", content: " the input" },
+            ],
+          },
+          { type: "link", href, children: [{ type: "code_inline", content: "src/example.ts:12" }] },
+        ],
+      }),
+    ).toEqual([
+      { text: "validates", bold: true, href },
+      { text: " the input", href },
+      {
+        text: " (example.ts:12)",
+        href,
+        fileIcon: "typescript",
+        sourceText: "[validates the input](</repo/src/example.ts:12>)",
+      },
+      { text: "example.ts:12", href, fileIcon: "typescript" },
+    ]);
+  });
+
+  it("copies a descriptive file link with its prose label intact", () => {
+    const runs = nativeMarkdownTextRuns({
+      type: "paragraph",
+      children: [
+        {
+          type: "link",
+          href: "file:///repo/README.md#L12",
+          children: [{ type: "text", content: "ignored label" }],
+        },
+      ],
+    });
+
+    expect(
+      nativeMarkdownContextCopyRanges(
+        runs.map((run) => ({ run, text: run.text, inlineImageLength: run.fileIcon ? 1 : 0 })),
+      ),
+    ).toEqual([
+      {
+        start: 0,
+        end: "ignored label (README.md:12)".length + 1,
+        text: "[ignored label](<file:///repo/README.md#L12>)",
+      },
+    ]);
+  });
+
+  it("keeps copy ranges for adjacent same-destination links separate", () => {
+    const runs = nativeMarkdownTextRuns({
+      type: "paragraph",
+      children: [
+        {
+          type: "link",
+          href: "/repo/src/example.ts:12",
+          children: [{ type: "text", content: "validates the input" }],
+        },
+        {
+          type: "link",
+          href: "/repo/src/example.ts:12",
+          children: [{ type: "text", content: "example.ts:12" }],
+        },
+      ],
+    });
+
+    const firstEnd = "validates the input (example.ts:12)".length + 1;
+    expect(
+      nativeMarkdownContextCopyRanges(
+        runs.map((run) => ({ run, text: run.text, inlineImageLength: run.fileIcon ? 1 : 0 })),
+      ),
+    ).toEqual([
+      {
+        start: 0,
+        end: firstEnd,
+        text: "[validates the input](</repo/src/example.ts:12>)",
+      },
+      {
+        start: firstEnd,
+        end: firstEnd + "example.ts:12".length + 1,
+        text: "[example.ts:12](</repo/src/example.ts:12>)",
       },
     ]);
   });

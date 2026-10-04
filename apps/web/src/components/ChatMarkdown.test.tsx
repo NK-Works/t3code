@@ -141,6 +141,51 @@ describe("ChatMarkdown context references", () => {
   });
 });
 
+describe("ChatMarkdown file-link labels", () => {
+  it("retains descriptive prose, emphasis, destinations, and copy text", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/repo"
+        text="This function [**validates** the input](/repo/src/example.ts:12)."
+      />,
+    );
+
+    expect(html).toContain("<strong>validates</strong>");
+    expect(html).toContain(" the input");
+    expect(html).toContain("example.ts");
+    expect(html).toContain("<button");
+    expect(html).toContain('data-markdown-copy="[validates the input](/repo/src/example.ts:12)"');
+  });
+
+  it("keeps filename labels compact", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/repo" text="See [example.ts](/repo/src/example.ts:12)." />,
+    );
+
+    expect(html).toContain('data-markdown-copy="[example.ts](/repo/src/example.ts:12)"');
+    expect(html).toContain(">See <button");
+  });
+
+  it("copies the filename for a whitespace-only link label", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/repo" text="[   ](/repo/example.ts:12)" />,
+    );
+
+    expect(html).toContain('data-markdown-copy="[example.ts](/repo/example.ts:12)"');
+  });
+
+  it("round-trips copied file-link labels with escaped delimiters", () => {
+    const copied = "[a \\[b\\] c](/repo/example.ts:12)";
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/repo" text="[a [b] c](/repo/example.ts:12)" />,
+    );
+
+    expect(html).toContain(`data-markdown-copy="${copied}"`);
+    const rerendered = renderToStaticMarkup(<ChatMarkdown cwd="/repo" text={copied} />);
+    expect(rerendered).toContain(`data-markdown-copy="${copied}"`);
+  });
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

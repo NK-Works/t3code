@@ -1,4 +1,8 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
+import {
+  escapeMarkdownLinkLabel,
+  isMarkdownFileLinkLabel,
+} from "@t3tools/client-runtime/markdown-links";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { imageMimeType } from "@t3tools/shared/image";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
@@ -94,7 +98,8 @@ import {
   parseComposerContextHref,
 } from "@t3tools/shared/composerContextReferences";
 
-/** Native selections count UTF-16 display units, including each inline image placeholder. */
+/** Reconstructs the canonical markdown link when copying a descriptive
+    file-link chip, so the prose label is not dropped from the clipboard. */
 export function nativeMarkdownContextCopyRanges(
   runs: ReadonlyArray<{
     readonly run: {
@@ -108,10 +113,15 @@ export function nativeMarkdownContextCopyRanges(
     readonly inlineImageLength: number;
   }>,
 ) {
+  const starts: number[] = [];
   let offset = 0;
-  return runs.flatMap(({ run, text, inlineImageLength }) => {
-    const start = offset;
+  for (const { text, inlineImageLength } of runs) {
+    starts.push(offset);
     offset += text.length + inlineImageLength;
+  }
+  return runs.flatMap(({ run, text, inlineImageLength }, index) => {
+    const start = starts[index] ?? 0;
+    const end = start + text.length + inlineImageLength;
     const reference = parseComposerContextHref(run.href ?? "");
     const source = reference
       ? formatComposerContextReference({ ...reference, label: run.text })
@@ -120,7 +130,25 @@ export function nativeMarkdownContextCopyRanges(
         : run.fileIcon && run.href
           ? (run.sourceText ?? `[${run.text}](<${run.href}>)`)
           : null;
-    return source === null ? [] : [{ start, end: offset, text: source }];
+    if (source === null) return [];
+    // A descriptive file link renders its prose label as plain href runs ahead
+    // of the destination chip run, which carries the full canonical link as its
+    // source text. Extend that range over the label so copying keeps the prose.
+    // Runs that already carry their own chip (fileIcon) or skill end the label.
+    let rangeStart = start;
+    if (run.fileIcon && run.href && run.sourceText) {
+      let previous = index - 1;
+      while (
+        previous >= 0 &&
+        runs[previous]?.run.href === run.href &&
+        runs[previous]?.run.fileIcon == null &&
+        runs[previous]?.run.skillName == null
+      ) {
+        rangeStart = starts[previous] ?? rangeStart;
+        previous -= 1;
+      }
+    }
+    return [{ start: rangeStart, end, text: source }];
   });
 }
 
@@ -181,6 +209,7 @@ interface RunContext {
   readonly href?: string;
   readonly externalHost?: string;
   readonly fileIcon?: MarkdownFileIcon;
+  readonly sourceText?: string;
   readonly role?: NativeMarkdownTextRun["role"];
   readonly headingLevel?: number;
   readonly depth?: number;
@@ -268,6 +297,7 @@ function sameRunStyle(left: NativeMarkdownTextRun, right: NativeMarkdownTextRun)
     left.href === right.href &&
     left.externalHost === right.externalHost &&
     left.fileIcon === right.fileIcon &&
+    left.sourceText === right.sourceText &&
     left.skillName === right.skillName &&
     left.skillLabel === right.skillLabel &&
     left.role === right.role &&
@@ -298,6 +328,7 @@ function appendRun(
     ...(context.href ? { href: context.href } : {}),
     ...(context.externalHost ? { externalHost: context.externalHost } : {}),
     ...(context.fileIcon ? { fileIcon: context.fileIcon } : {}),
+    ...(context.sourceText ? { sourceText: context.sourceText } : {}),
     ...(context.role ? { role: context.role } : {}),
     ...(context.headingLevel ? { headingLevel: context.headingLevel } : {}),
     ...(context.depth ? { depth: context.depth } : {}),
@@ -425,7 +456,7 @@ function appendChildren(
   return runs;
 }
 
-function nodeTextContent(node: MarkdownNode): string {
+export function nodeTextContent(node: MarkdownNode): string {
   if (node.content !== undefined) {
     return node.content;
   }
@@ -482,6 +513,18 @@ function appendNode(
       }
       const presentation = resolveMarkdownLinkPresentation(node.href ?? "");
       if (presentation.kind === "file") {
+        // A descriptive label stays visible ahead of the destination chip.
+        // The chip run carries the full canonical link so copying keeps the prose.
+        const label = nodeTextContent(node);
+        if (!isMarkdownFileLinkLabel(label, node.href ?? "")) {
+          appendChildren(runs, node, { ...context, href: presentation.href });
+          return appendRun(runs, ` (${presentation.label})`, {
+            ...context,
+            href: presentation.href,
+            fileIcon: presentation.icon,
+            sourceText: `[${escapeMarkdownLinkLabel(label)}](<${presentation.href}>)`,
+          });
+        }
         return appendRun(runs, presentation.label, {
           ...context,
           href: presentation.href,

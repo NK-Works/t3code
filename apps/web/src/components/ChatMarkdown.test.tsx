@@ -947,3 +947,91 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("chat-markdown-file-link");
   });
 });
+
+describe("ChatMarkdown unclosed angle-bracket file links", () => {
+  it.each([true, false])(
+    "renders the reporter's missing closer as a file chip with parseRawHtml=%s",
+    (parseRawHtml) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="/tmp/project"
+          text="[file](<local/path/file.md)"
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+
+      expect(html).toContain("chat-markdown-file-link");
+      expect(html).toContain("file.md");
+      expect(html).not.toContain("&lt;local/path/file.md");
+    },
+  );
+
+  it.each([true, false])(
+    "renders unclosed destinations with spaces and Windows paths as file chips with parseRawHtml=%s",
+    (parseRawHtml) => {
+      const spaced = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="/tmp/project"
+          text="[Receipts](</Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts)"
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+      const windows = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="C:/Users/shawn/project"
+          text="[Open](<C:/Users/shawn/project/src/main.ts)"
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+      const listed = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="/tmp/project"
+          text="- [file](<local/path/file.md)"
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+
+      for (const html of [spaced, windows, listed]) {
+        expect(html).toContain("chat-markdown-file-link");
+      }
+      expect(spaced).toContain("Bike Receipts");
+      expect(windows).toContain("main.ts");
+      expect(listed).toContain("<li>");
+    },
+  );
+
+  it.each([true, false])(
+    "leaves other unclosed destinations as text with parseRawHtml=%s",
+    (parseRawHtml) => {
+      for (const text of [
+        "[site](<https://example.com/docs)",
+        "[note](<hello world)",
+        "[settings](</chat/settings)",
+      ]) {
+        const html = renderToStaticMarkup(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={text}
+            lineBreaks={!parseRawHtml}
+            parseRawHtml={parseRawHtml}
+          />,
+        );
+
+        expect(html).not.toContain("chat-markdown-file-link");
+      }
+    },
+  );
+
+  it("leaves the unclosed shape inside code spans literal", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text="`[file](</tmp/project/src/main.ts)`" />,
+    );
+
+    expect(html).not.toContain("chat-markdown-file-link");
+    expect(html).toContain("&lt;/tmp/project/src/main.ts");
+  });
+});

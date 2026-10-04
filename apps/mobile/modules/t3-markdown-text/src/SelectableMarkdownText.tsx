@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { View } from "react-native";
 import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
+import { repairUnclosedAngleLinkDestinations } from "@t3tools/client-runtime/markdown-links";
 
 import {
   nativeMarkdownChunkSpacing,
@@ -52,9 +53,12 @@ export function SelectableMarkdownText({
   marginBottom = 0,
 }: SelectableMarkdownTextProps) {
   const chunks = useMemo(() => {
+    // Same unclosed-angle repair as web ChatMarkdown: the native parser
+    // also leaves `[label](<path)` as raw text without the closing `>`.
+    const repaired = repairUnclosedAngleLinkDestinations(markdown);
     const parsedDocument = nativeMarkdownWithAuthoredWindowsPaths(
-      parseMarkdownWithOptions(markdown, { gfm: true, html: true, math: false }),
-      markdown,
+      parseMarkdownWithOptions(repaired, { gfm: true, html: true, math: false }),
+      repaired,
     );
     const document = preserveSoftBreaks
       ? nativeMarkdownWithPreservedSoftBreaks(parsedDocument)

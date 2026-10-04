@@ -344,3 +344,33 @@ export function workspaceRelativeFilePath(
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
   return normalizedPath.slice(normalizedRoot.length + 1);
 }
+
+const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
+const PROSE_UNCLOSED_ANGLE_LINK_PATTERN = /(`[^`\n]+`)|\[([^\]\n]*)\]\(\s*<([^<>\n]+?)\s*\)/g;
+
+/**
+ * Closes Codex's unclosed angle-bracket destinations (`[label](<path)`) so
+ * they parse as the same file link the well-formed shape produces. Only
+ * destinations that already read as file paths are repaired; fenced code,
+ * inline code, and every other malformed shape stay exactly as written.
+ */
+export function repairUnclosedAngleLinkDestinations(markdown: string): string {
+  // Fast path: an unclosed angle destination always contains "](<" in a row.
+  if (!markdown.includes("](<")) return markdown;
+  return markdown
+    .split(FENCED_CODE_SEGMENT_PATTERN)
+    .map((segment, index) =>
+      index % 2 === 1
+        ? segment
+        : segment.replace(
+            PROSE_UNCLOSED_ANGLE_LINK_PATTERN,
+            (match: string, codeSpan: string | undefined, label: string, destination: string) => {
+              if (codeSpan !== undefined) return match;
+              const path = destination.trim();
+              if (parseMarkdownFileLink(path) === null) return match;
+              return `[${label}](<${path}>)`;
+            },
+          ),
+    )
+    .join("");
+}

@@ -5,6 +5,7 @@ import {
   inlineCodeFilePathCandidate,
   parseFileUrlHref,
   parseMarkdownFileLink,
+  repairUnclosedAngleLinkDestinations,
   splitFilePathPosition,
   workspaceRelativeFilePath,
 } from "./markdownLinks.ts";
@@ -138,6 +139,44 @@ describe("parseMarkdownFileLink", () => {
       line: 42,
       column: 7,
     });
+  });
+});
+
+describe("repairUnclosedAngleLinkDestinations", () => {
+  it.each([
+    ["[file](<local/path/file.md)", "[file](<local/path/file.md>)"],
+    ["[notes](</home/me/notes.md)", "[notes](</home/me/notes.md>)"],
+    [
+      "[Receipts](</Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts)",
+      "[Receipts](</Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts>)",
+    ],
+    ["[Open](<C:/Users/shawn/project/src/main.ts)", "[Open](<C:/Users/shawn/project/src/main.ts>)"],
+    [
+      String.raw`[Open](<C:\Users\shawn\project\src\main.ts)`,
+      String.raw`[Open](<C:\Users\shawn\project\src\main.ts>)`,
+    ],
+    ["- [file](<local/path/file.md)", "- [file](<local/path/file.md>)"],
+    ["![shot](</tmp/shot.png)", "![shot](</tmp/shot.png>)"],
+    ["[a](<src/a.ts) and [b](<src/b.ts)", "[a](<src/a.ts>) and [b](<src/b.ts>)"],
+  ])("closes %s", (source, expected) => {
+    expect(repairUnclosedAngleLinkDestinations(source)).toBe(expected);
+  });
+
+  it.each([
+    "[file](<local/path/file.md>)",
+    "[file](local/path/file.md)",
+    "[site](<https://example.com/docs)",
+    "[note](<hello world)",
+    "[settings](</chat/settings)",
+    '<div class="x">hi</div>',
+    "<https://example.com>",
+    "```\n[file](<local/path/file.md)\n```",
+    "`[file](<local/path/file.md)`",
+    "[file](<)",
+    "[file](<local/path/file.md",
+    '[a](<local/path/file.md "title")',
+  ])("leaves %s alone", (source) => {
+    expect(repairUnclosedAngleLinkDestinations(source)).toBe(source);
   });
 });
 

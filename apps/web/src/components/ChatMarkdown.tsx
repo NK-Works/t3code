@@ -50,7 +50,10 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
+import {
+  inlineCodeFilePathCandidate,
+  repairUnclosedAngleLinkDestinations,
+} from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
@@ -3357,6 +3360,10 @@ function ChatMarkdown({
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
+  // Codex can emit angle-bracket destinations without the closing `>`,
+  // which CommonMark leaves as raw text. Repairing up front keeps the
+  // parsed tree, the link pre-scan, and source offsets on the same string.
+  const repairedText = useMemo(() => repairUnclosedAngleLinkDestinations(text), [text]);
   const {
     componentState,
     handleCopy,
@@ -3364,11 +3371,11 @@ function ChatMarkdown({
     markdownUrlTransform,
     localMediaPreview,
     setLocalMediaPreview,
-  } = useChatMarkdownState({ text, ...props });
+  } = useChatMarkdownState({ text: repairedText, ...props });
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
-    /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+    /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(repairedText);
   const remarkPlugins = useMemo(
     () => [
       ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
@@ -3400,7 +3407,7 @@ function ChatMarkdown({
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
-          {text}
+          {repairedText}
         </ReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (

@@ -1034,4 +1034,50 @@ describe("ChatMarkdown unclosed angle-bracket file links", () => {
     expect(html).not.toContain("chat-markdown-file-link");
     expect(html).toContain("&lt;/tmp/project/src/main.ts");
   });
+
+  it("keeps task toggles on the original offsets when a repair precedes them", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    let editedText: string | undefined;
+    const original = "[a](<src/a.ts)\n- [ ] Task";
+    const message = (text: string) => (
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={text}
+        onTaskListChange={({ markerOffset, checked }) => {
+          editedText = setMarkdownTaskChecked(text, markerOffset, checked);
+          renderer!.update(message(editedText));
+        }}
+      />
+    );
+
+    try {
+      await act(async () => {
+        renderer = create(message(original));
+      });
+      const mounted = renderer!;
+      const input = mounted.root.findAllByType("input")[0]!;
+      const listItem = mounted.root.findAllByType("li")[0]!;
+      // The `[` sits at offset 17 in the original text; the inserted `>`
+      // shifts the repaired offset to 18.
+      expect(listItem.props["data-task-marker-offset"]).toBe(17);
+      const { onChange } = input.props as ComponentProps<"input">;
+      if (!onChange) throw new Error("Task checkbox has no edit handler");
+      await act(async () => {
+        onChange({
+          currentTarget: {
+            checked: true,
+            closest: () => ({
+              dataset: { taskMarkerOffset: String(listItem.props["data-task-marker-offset"]) },
+            }),
+          },
+        } as unknown as Parameters<typeof onChange>[0]);
+      });
+
+      expect(editedText).toBe("[a](<src/a.ts)\n- [x] Task");
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
 });

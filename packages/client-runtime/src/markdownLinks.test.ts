@@ -3,9 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   fileBasename,
   inlineCodeFilePathCandidate,
+  mapRepairedOffsetToOriginal,
   parseFileUrlHref,
   parseMarkdownFileLink,
   repairUnclosedAngleLinkDestinations,
+  repairUnclosedAngleLinkDestinationsDetailed,
   splitFilePathPosition,
   workspaceRelativeFilePath,
 } from "./markdownLinks.ts";
@@ -158,6 +160,8 @@ describe("repairUnclosedAngleLinkDestinations", () => {
     ["- [file](<local/path/file.md)", "- [file](<local/path/file.md>)"],
     ["![shot](</tmp/shot.png)", "![shot](</tmp/shot.png>)"],
     ["[a](<src/a.ts) and [b](<src/b.ts)", "[a](<src/a.ts>) and [b](<src/b.ts>)"],
+    ["``[a](<src/a.ts)`` and [b](<src/b.ts)", "``[a](<src/a.ts)`` and [b](<src/b.ts>)"],
+    ["para\n    continued [a](<src/a.ts)", "para\n    continued [a](<src/a.ts>)"],
   ])("closes %s", (source, expected) => {
     expect(repairUnclosedAngleLinkDestinations(source)).toBe(expected);
   });
@@ -172,11 +176,37 @@ describe("repairUnclosedAngleLinkDestinations", () => {
     "<https://example.com>",
     "```\n[file](<local/path/file.md)\n```",
     "`[file](<local/path/file.md)`",
+    "~~~\n[file](<local/path/file.md)\n~~~",
+    "~~~\n[file](<src/a.ts)\n```\n",
+    "```\n[file](<local/path/file.md)\n",
+    "    [file](<src/a.ts)",
+    "text\n\n    [file](<src/a.ts)",
+    "`start\n[file](<local/path/file.md)\nend`",
     "[file](<)",
     "[file](<local/path/file.md",
     '[a](<local/path/file.md "title")',
   ])("leaves %s alone", (source) => {
     expect(repairUnclosedAngleLinkDestinations(source)).toBe(source);
+  });
+
+  it("reports the repaired text and insertion offsets", () => {
+    expect(repairUnclosedAngleLinkDestinationsDetailed("[a](<src/a.ts)")).toEqual({
+      text: "[a](<src/a.ts>)",
+      insertedOffsets: [14],
+    });
+    expect(repairUnclosedAngleLinkDestinationsDetailed("[a](https://example.com)")).toEqual({
+      text: "[a](https://example.com)",
+      insertedOffsets: [],
+    });
+  });
+
+  it.each([
+    [[], 7, 7],
+    [[14], 5, 5],
+    [[14], 19, 18],
+    [[4, 10], 12, 10],
+  ])("maps repaired offset %s to %s", (inserted, repaired, expected) => {
+    expect(mapRepairedOffsetToOriginal(inserted, repaired)).toBe(expected);
   });
 });
 

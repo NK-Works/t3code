@@ -52,7 +52,8 @@ import {
 } from "@t3tools/client-runtime/markdown-images";
 import {
   inlineCodeFilePathCandidate,
-  repairUnclosedAngleLinkDestinations,
+  mapRepairedOffsetToOriginal,
+  repairUnclosedAngleLinkDestinationsDetailed,
 } from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
@@ -281,6 +282,7 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
+const EMPTY_REPAIR_OFFSETS: readonly number[] = [];
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -2325,6 +2327,7 @@ function areMarkdownFileLinkPropsEqual(
 
 function useChatMarkdownState({
   text,
+  repairOffsets = EMPTY_REPAIR_OFFSETS,
   cwd,
   threadRef,
   pullRequestPanelRef,
@@ -2339,7 +2342,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
-}: ChatMarkdownProps) {
+}: ChatMarkdownProps & { readonly repairOffsets?: readonly number[] }) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
   const markdownRef = useRef<HTMLDivElement>(null);
@@ -2749,6 +2752,7 @@ function useChatMarkdownState({
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
       resolvedTheme,
+      repairOffsets,
       serverConfig,
       skills,
       text,
@@ -2780,6 +2784,7 @@ function useChatMarkdownState({
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
       resolvedTheme,
+      repairOffsets,
       serverConfig,
       skills,
       text,
@@ -2870,12 +2875,16 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   li: function MarkdownListItem({ node, children, ...props }) {
-    const { text, skills } = use(ChatMarkdownRendererContext);
+    const { text, skills, repairOffsets } = use(ChatMarkdownRendererContext);
     const listItemStart = node?.position?.start.offset;
     const markerOffset =
       typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+    // Repairs insert `>`, so a marker after one sits further along in the
+    // rendered text than in the source the toggle edits. Map it back.
+    const originalMarkerOffset =
+      markerOffset === null ? null : mapRepairedOffsetToOriginal(repairOffsets, markerOffset);
     return (
-      <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
+      <li {...props} data-task-marker-offset={originalMarkerOffset ?? undefined}>
         {renderSkillInlineMarkdownChildren(children, skills)}
       </li>
     );
@@ -3363,7 +3372,10 @@ function ChatMarkdown({
   // Codex can emit angle-bracket destinations without the closing `>`,
   // which CommonMark leaves as raw text. Repairing up front keeps the
   // parsed tree, the link pre-scan, and source offsets on the same string.
-  const repairedText = useMemo(() => repairUnclosedAngleLinkDestinations(text), [text]);
+  // The insertion offsets map repaired positions (task markers) back to the
+  // source the toggle edits.
+  const repairedMarkdown = useMemo(() => repairUnclosedAngleLinkDestinationsDetailed(text), [text]);
+  const repairedText = repairedMarkdown.text;
   const {
     componentState,
     handleCopy,
@@ -3371,7 +3383,11 @@ function ChatMarkdown({
     markdownUrlTransform,
     localMediaPreview,
     setLocalMediaPreview,
-  } = useChatMarkdownState({ text: repairedText, ...props });
+  } = useChatMarkdownState({
+    text: repairedText,
+    repairOffsets: repairedMarkdown.insertedOffsets,
+    ...props,
+  });
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&

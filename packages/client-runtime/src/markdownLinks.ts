@@ -345,32 +345,173 @@ export function workspaceRelativeFilePath(
   return normalizedPath.slice(normalizedRoot.length + 1);
 }
 
-const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
-const PROSE_UNCLOSED_ANGLE_LINK_PATTERN = /(`[^`\n]+`)|\[([^\]\n]*)\]\(\s*<([^<>\n]+?)\s*\)/g;
+const UNCLOSED_ANGLE_LINK_PATTERN = /\[([^\]\n]*)\]\(\s*<([^<>\n]+?)\s*\)/g;
+const FENCE_OPENER_PATTERN = /^ {0,3}(`{3,}|~{3,})/;
+const INDENTED_CODE_PATTERN = /^(?: {4}|\t)/;
+const BLANK_LINE_PATTERN = /^\s*$/;
+
+export interface UnclosedAngleLinkRepair {
+  readonly text: string;
+  /** Repaired-string offsets of each inserted `>`, ascending. */
+  readonly insertedOffsets: readonly number[];
+}
+
+interface FenceMarker {
+  readonly char: "`" | "~";
+  readonly length: number;
+}
+
+function fenceOpener(line: string): FenceMarker | null {
+  const match = FENCE_OPENER_PATTERN.exec(line);
+  const marker = match?.[1];
+  if (!marker) return null;
+  // An info string on a backtick fence cannot itself contain backticks.
+  if (marker.startsWith("`") && line.slice(match[0].length).includes("`")) return null;
+  return { char: marker.startsWith("`") ? "`" : "~", length: marker.length };
+}
+
+function isFenceCloser(line: string, fence: FenceMarker): boolean {
+  let index = 0;
+  while (index < 3 && line[index] === " ") index += 1;
+  if (line[index] !== fence.char) return false;
+  let end = index;
+  while (line[end] === fence.char) end += 1;
+  if (end - index < fence.length) return false;
+  return line.slice(end).trim() === "";
+}
+
+/** End offset (exclusive) of a backtick run of exactly `length`, or -1. */
+function closingBacktickRunEnd(line: string, from: number, length: number): number {
+  for (let index = from; index <= line.length - length; index += 1) {
+    if (line[index] !== "`") continue;
+    let end = index;
+    while (line[end] === "`") end += 1;
+    if (end - index === length) return end;
+    index = end - 1;
+  }
+  return -1;
+}
+
+/**
+ * Maps an offset in repaired text back to the source. Each repair inserts
+ * exactly one `>`, so every earlier insertion shifts the offset down by one.
+ */
+export function mapRepairedOffsetToOriginal(
+  insertedOffsets: readonly number[],
+  repairedOffset: number,
+): number {
+  let shift = 0;
+  for (const inserted of insertedOffsets) {
+    if (inserted > repairedOffset) break;
+    shift += 1;
+  }
+  return repairedOffset - shift;
+}
 
 /**
  * Closes Codex's unclosed angle-bracket destinations (`[label](<path)`) so
  * they parse as the same file link the well-formed shape produces. Only
- * destinations that already read as file paths are repaired; fenced code,
- * inline code, and every other malformed shape stay exactly as written.
+ * destinations that already read as file paths are repaired. Fenced code
+ * (backtick and tilde), indented code, and inline code spans — including
+ * spans continued across lines — stay exactly as written, as does every
+ * other malformed shape.
  */
+export function repairUnclosedAngleLinkDestinationsDetailed(
+  markdown: string,
+): UnclosedAngleLinkRepair {
+  const unchanged: UnclosedAngleLinkRepair = { text: markdown, insertedOffsets: [] };
+  if (!markdown.includes("](<")) return unchanged;
+
+  const insertedOffsets: number[] = [];
+  const repairChunk = (chunk: string, chunkBase: number): string =>
+    chunk.replace(
+      UNCLOSED_ANGLE_LINK_PATTERN,
+      (match: string, label: string, destination: string, offset: number) => {
+        const path = destination.trim();
+        if (parseMarkdownFileLink(path) === null) return match;
+        insertedOffsets.push(chunkBase + offset + match.length);
+        return `[${label}](<${path}>)`;
+      },
+    );
+  const repairProseLine = (
+    line: string,
+    lineBase: number,
+  ): { text: string; continuedSpan: number } => {
+    let result = "";
+    let cursor = 0;
+    let continuedSpan = 0;
+    while (cursor < line.length) {
+      const runStart = line.indexOf("`", cursor);
+      if (runStart === -1) {
+        result += repairChunk(line.slice(cursor), lineBase + result.length);
+        break;
+      }
+      let runEnd = runStart;
+      while (line[runEnd] === "`") runEnd += 1;
+      const closeEnd = closingBacktickRunEnd(line, runEnd, runEnd - runStart);
+      result += repairChunk(line.slice(cursor, runStart), lineBase + result.length);
+      if (closeEnd === -1) {
+        result += line.slice(runStart);
+        continuedSpan = runEnd - runStart;
+        break;
+      }
+      result += line.slice(runStart, closeEnd);
+      cursor = closeEnd;
+    }
+    return { text: result, continuedSpan };
+  };
+
+  const lines = markdown.split("\n");
+  const repairedLines: string[] = [];
+  let fence: FenceMarker | null = null;
+  let spanLength = 0;
+  let prevBlank = true;
+  let prevCodeBlock = false;
+  let base = 0;
+  for (const line of lines) {
+    let repairedLine: string;
+    if (fence !== null) {
+      if (isFenceCloser(line, fence)) fence = null;
+      repairedLine = line;
+      prevBlank = false;
+      prevCodeBlock = true;
+    } else if (spanLength > 0) {
+      const end = closingBacktickRunEnd(line, 0, spanLength);
+      if (end === -1) {
+        repairedLine = line;
+        prevBlank = false;
+        prevCodeBlock = false;
+      } else {
+        spanLength = 0;
+        repairedLine = line.slice(0, end) + repairChunk(line.slice(end), base + end);
+        prevBlank = BLANK_LINE_PATTERN.test(line);
+        prevCodeBlock = false;
+      }
+    } else {
+      const opener = fenceOpener(line);
+      if (opener !== null) {
+        fence = opener;
+        repairedLine = line;
+        prevBlank = false;
+        prevCodeBlock = true;
+      } else if (INDENTED_CODE_PATTERN.test(line) && (prevBlank || prevCodeBlock)) {
+        repairedLine = line;
+        prevBlank = false;
+        prevCodeBlock = true;
+      } else {
+        const repaired = repairProseLine(line, base);
+        repairedLine = repaired.text;
+        spanLength = repaired.continuedSpan;
+        prevBlank = BLANK_LINE_PATTERN.test(line);
+        prevCodeBlock = false;
+      }
+    }
+    repairedLines.push(repairedLine);
+    base += repairedLine.length + 1;
+  }
+  return { text: repairedLines.join("\n"), insertedOffsets };
+}
+
 export function repairUnclosedAngleLinkDestinations(markdown: string): string {
-  // Fast path: an unclosed angle destination always contains "](<" in a row.
-  if (!markdown.includes("](<")) return markdown;
-  return markdown
-    .split(FENCED_CODE_SEGMENT_PATTERN)
-    .map((segment, index) =>
-      index % 2 === 1
-        ? segment
-        : segment.replace(
-            PROSE_UNCLOSED_ANGLE_LINK_PATTERN,
-            (match: string, codeSpan: string | undefined, label: string, destination: string) => {
-              if (codeSpan !== undefined) return match;
-              const path = destination.trim();
-              if (parseMarkdownFileLink(path) === null) return match;
-              return `[${label}](<${path}>)`;
-            },
-          ),
-    )
-    .join("");
+  return repairUnclosedAngleLinkDestinationsDetailed(markdown).text;
 }

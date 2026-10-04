@@ -35,6 +35,7 @@ describe("unclosed angle-bracket file links", () => {
   it.each([
     "[file](<local/path/file.md>)",
     "[site](<https://example.com/docs)",
+    "~~~\n[file](<local/path/file.md)\n~~~",
     "```\n[file](<local/path/file.md)\n```",
   ])("leaves %s alone", (source) => {
     expect(repairUnclosedAngleLinkDestinations(source)).toBe(source);

@@ -80,7 +80,7 @@ import {
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
-import { reloadOnceForRouteChunkError } from "../lib/chunkReloadGuard";
+import { clearChunkReloadGuard, reloadOnceForRouteChunkError } from "../lib/chunkReloadGuard";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -138,6 +138,14 @@ function RootRouteNotFoundView() {
 
 function RootRouteView() {
   useEffect(() => installDesktopPasteAsText(window.desktopBridge, window), []);
+  // A successful first commit re-arms the chunk-reload guard for the next
+  // stale deploy. This runs only when the whole tree (including the initial
+  // route's split chunks) commits: a chunk failure renders the error boundary
+  // instead, so the retry marker survives and a repeat failure surfaces
+  // rather than reloading again.
+  useEffect(() => {
+    clearChunkReloadGuard();
+  }, []);
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";

@@ -13,11 +13,7 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
-import {
-  clearChunkReloadGuard,
-  reloadOnceForChunkLoadError,
-  reloadOnceForRouteChunkError,
-} from "./lib/chunkReloadGuard";
+import { reloadOnceForChunkLoadError, reloadOnceForRouteChunkError } from "./lib/chunkReloadGuard";
 
 prepareProviderAuthDelivery();
 
@@ -35,10 +31,8 @@ const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string
 
 // A failed split-chunk fetch usually means the hashed assets went stale under
 // a deploy; one guarded reload picks up the fresh index.html.
-let chunkLoadFailed = false;
 let reloadScheduled = false;
 window.addEventListener("vite:preloadError", (event) => {
-  chunkLoadFailed = true;
   if (reloadOnceForChunkLoadError()) {
     reloadScheduled = true;
     event.preventDefault();
@@ -69,11 +63,12 @@ export const startup = Promise.all([
 ])
   .then(([ManagedAuthShell]) => {
     // A route chunk failure still resolves router.load(): the error is parked in
-    // the lazy component and surfaces through the route error boundary. Skip the
-    // paint when a reload is on its way, and only re-arm the guard after a boot
-    // that fetched every chunk it asked for.
+    // the lazy component and surfaces through the route error boundary, so this
+    // continuation must not clear the reload guard — that would wipe the retry
+    // marker before the boundary runs and turn a persistent failure into a
+    // reload loop. The guard is re-armed only after a successful first commit
+    // (see RootRouteView). Skip the paint when a reload is on its way.
     if (reloadScheduled) return;
-    if (!chunkLoadFailed) clearChunkReloadGuard();
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         {ManagedAuthShell && clerkPublishableKey ? (

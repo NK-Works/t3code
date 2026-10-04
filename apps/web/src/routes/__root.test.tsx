@@ -8,12 +8,24 @@ import {
   RouterProvider,
   type ErrorComponentProps,
   type ErrorRouteComponent,
+  type RouteComponent,
 } from "@tanstack/react-router";
 import { act, createElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { Route as RootRoute } from "./__root";
+import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
+
+function getRootView(): RouteComponent {
+  const component = RootRoute.options.component;
+  if (!component) {
+    throw new Error("root route has no component under test");
+  }
+  return component;
+}
+
+const RootView = getRootView();
 
 function getRootErrorComponent(): ErrorRouteComponent {
   const component = RootRoute.options.errorComponent;
@@ -80,6 +92,30 @@ async function renderFailingRoute(error: Error) {
   });
 }
 
+async function renderSuccessfulRootView() {
+  const rootRoute = createRootRoute({
+    beforeLoad: () => ({ authGateState: { status: "hosted-static" } }),
+    component: () => (
+      <AppAtomRegistryProvider>
+        <RootView />
+      </AppAtomRegistryProvider>
+    ),
+  });
+  const pairRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/pair",
+    component: () => null,
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([pairRoute]),
+    history: createMemoryHistory({ initialEntries: ["/pair"] }),
+  });
+  await router.load();
+  await act(() => {
+    renderer = create(<RouterProvider router={router} />);
+  });
+}
+
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   // The chunk guard persists in sessionStorage: isolate each case.
@@ -124,17 +160,28 @@ describe("root route stale chunk recovery", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the error report when the chunk still fails after a reload", async () => {
+  it("re-arms the guard after a successful commit, still without looping", async () => {
+    // Boot 1: a stale chunk on a fresh streak reloads once.
     await renderFailingRoute(STALE_SETTINGS_CHUNK);
     expect(reload).toHaveBeenCalledTimes(1);
 
+    // Boot 2: the app boots cleanly. Only a successful commit may re-arm the
+    // guard — clearing it any earlier (e.g. in the startup continuation,
+    // before the error boundary runs) turns a persistent failure into a
+    // reload loop.
+    await act(() => renderer?.unmount());
+    await renderSuccessfulRootView();
+
+    // Boot 3: a later stale chunk reloads once more instead of wedging…
     await act(() => renderer?.unmount());
     await renderFailingRoute(STALE_SETTINGS_CHUNK);
+    expect(reload).toHaveBeenCalledTimes(2);
 
-    // No reload loop: the persistent failure surfaces normally.
-    expect(reload).toHaveBeenCalledTimes(1);
+    // …while a repeat failure in the same streak still surfaces.
+    await act(() => renderer?.unmount());
+    await renderFailingRoute(STALE_SETTINGS_CHUNK);
+    expect(reload).toHaveBeenCalledTimes(2);
     expect(visibleText()).toContain("Something went wrong");
-    expect(visibleText()).toContain("Failed to fetch dynamically imported module");
   });
 
   it("leaves ordinary route errors alone", async () => {

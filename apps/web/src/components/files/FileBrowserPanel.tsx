@@ -390,9 +390,13 @@ export default function FileBrowserPanel({
             changed = true;
             void load(path.replace(/\/$/, ""));
           }
-        } else if (item?.isDirectory()) {
+        } else if (item?.isDirectory() && !pendingRestore.has(path)) {
           // The row exists and is collapsed, so this is the user closing a
-          // folder. Honour it and stop restoring it.
+          // folder. Honour it and stop restoring it. Folders still queued for
+          // their first restore expand are skipped: the model notifies this
+          // subscription about structural updates too, so a freshly
+          // registered (hence collapsed) row would otherwise read as a user
+          // collapse and wipe the seeded set on every remount.
           pendingRestore.delete(path);
           if (expandedPathsRef.current.has(path)) {
             expandedPathsRef.current.delete(path);

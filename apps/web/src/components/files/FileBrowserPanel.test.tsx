@@ -51,6 +51,11 @@ class FakeFileTreeModel {
     }
     this.rows.clear();
     for (const [path, row] of next) this.rows.set(path, row);
+    // The real Pierre model notifies subscribers about structural updates as
+    // well as expand/collapse, so the fake must too: that notification is what
+    // used to mistake freshly registered (hence collapsed) rows for user
+    // collapses and wipe the seeded set on remount.
+    this.emit();
   }
 
   batch(updates: readonly BatchOperation[]) {
@@ -65,6 +70,7 @@ class FakeFileTreeModel {
         this.rows.delete(update.path);
       }
     }
+    this.emit();
   }
 
   subscribe(listener: () => void): () => void {

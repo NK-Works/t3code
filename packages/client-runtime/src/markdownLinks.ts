@@ -366,6 +366,7 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   return path === targetPath || targetPath.endsWith(`/${path}`);
 }
 
+/** Reads the plain text of a link label for destination matching. */
 function markdownFileLinkLabelPath(label: string): string | null {
   // A `file:` URL label carries the destination the same way an href does.
   if (/^file:/i.test(label)) {
@@ -389,6 +390,7 @@ function markdownFileLinkLabelPath(label: string): string | null {
   return normalizeLabelPath(splitFilePathPosition(safeDecodeURIComponent(withoutAnchor)).path);
 }
 
+/** Normalizes a label path for destination comparison. */
 function normalizeLabelPath(path: string): string {
   return path
     .replaceAll("\\", "/")

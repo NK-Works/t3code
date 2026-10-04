@@ -3188,7 +3188,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
 
     const label = nodeToPlainText(children);
-    const copyMarkdown = `[${label.trim() ? escapeMarkdownLinkLabel(label) : fileLinkMeta.basename}](${normalizedHref})`;
+    const copyMarkdown = `[${label.trim() ? escapeMarkdownLinkLabel(label) : escapeMarkdownLinkLabel(fileLinkMeta.basename)}](${normalizedHref})`;
     return fileLinkChip(
       fileLinkMeta,
       copyMarkdown,

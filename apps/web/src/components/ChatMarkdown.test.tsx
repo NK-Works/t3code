@@ -184,6 +184,12 @@ describe("ChatMarkdown file-link labels", () => {
     const rerendered = renderToStaticMarkup(<ChatMarkdown cwd="/repo" text={copied} />);
     expect(rerendered).toContain(`data-markdown-copy="${copied}"`);
   });
+
+  it("escapes the fallback basename for a whitespace-only link label", () => {
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp" text="[   ](/tmp/foo]bar.ts)" />);
+
+    expect(html).toContain('data-markdown-copy="[foo\\]bar.ts](/tmp/foo%5Dbar.ts)"');
+  });
 });
 
 describe("ChatMarkdown favicon privacy", () => {

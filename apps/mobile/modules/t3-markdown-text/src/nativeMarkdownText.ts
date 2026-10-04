@@ -456,6 +456,7 @@ function appendChildren(
   return runs;
 }
 
+/** Reads the inline text of a markdown node for link presentation. */
 export function nodeTextContent(node: MarkdownNode): string {
   if (node.content !== undefined) {
     return node.content;
@@ -517,12 +518,19 @@ function appendNode(
         // The chip run carries the full canonical link so copying keeps the prose.
         const label = nodeTextContent(node);
         if (!isMarkdownFileLinkLabel(label, node.href ?? "")) {
+          const labelStart = runs.length;
           appendChildren(runs, node, { ...context, href: presentation.href });
+          // Copy the label the runs display: breaks render as spaces, so the
+          // canonical link must spell them the same way.
+          const displayedLabel = runs
+            .slice(labelStart)
+            .map((run) => run.text)
+            .join("");
           return appendRun(runs, ` (${presentation.label})`, {
             ...context,
             href: presentation.href,
             fileIcon: presentation.icon,
-            sourceText: `[${escapeMarkdownLinkLabel(label)}](<${presentation.href}>)`,
+            sourceText: `[${escapeMarkdownLinkLabel(displayedLabel)}](<${presentation.href}>)`,
           });
         }
         return appendRun(runs, presentation.label, {

@@ -227,6 +227,36 @@ describe("nativeMarkdownTextRuns", () => {
     ]);
   });
 
+  it("copies soft breaks in descriptive file-link labels as displayed", () => {
+    const runs = nativeMarkdownTextRuns({
+      type: "paragraph",
+      children: [
+        {
+          type: "link",
+          href: "file:///repo/README.md#L12",
+          children: [
+            { type: "text", content: "read" },
+            { type: "soft_break" },
+            { type: "text", content: "here" },
+          ],
+        },
+      ],
+    });
+
+    expect(runs.map((run) => run.text).join("")).toBe("read here (README.md:12)");
+    expect(
+      nativeMarkdownContextCopyRanges(
+        runs.map((run) => ({ run, text: run.text, inlineImageLength: run.fileIcon ? 1 : 0 })),
+      ),
+    ).toEqual([
+      {
+        start: 0,
+        end: "read here (README.md:12)".length + 1,
+        text: "[read here](<file:///repo/README.md#L12>)",
+      },
+    ]);
+  });
+
   it("keeps copy ranges for adjacent same-destination links separate", () => {
     const runs = nativeMarkdownTextRuns({
       type: "paragraph",

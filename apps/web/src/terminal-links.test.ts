@@ -198,6 +198,36 @@ describe("resolvePathLinkTarget", () => {
       "/Users/julius/project/main.c:10:5",
     );
   });
+
+  it("collapses parent segments that escape the workspace", () => {
+    expect(resolvePathLinkTarget("../other/notes.md", "/home/me/project")).toBe(
+      "/home/me/other/notes.md",
+    );
+  });
+
+  it("keeps parent segments that stay inside the workspace as workspace paths", () => {
+    expect(resolvePathLinkTarget("sub/../notes.md", "/home/me/project")).toBe(
+      "/home/me/project/notes.md",
+    );
+  });
+
+  it("collapses dot segments in relative paths", () => {
+    expect(resolvePathLinkTarget("./src/main.ts", "/home/me/project")).toBe(
+      "/home/me/project/src/main.ts",
+    );
+  });
+
+  it("collapses parent segments in absolute paths", () => {
+    expect(resolvePathLinkTarget("/home/me/project/../other/notes.md", "/home/me/project")).toBe(
+      "/home/me/other/notes.md",
+    );
+  });
+
+  it("collapses parent segments in windows paths", () => {
+    expect(resolvePathLinkTarget("..\\other\\notes.md", "C:\\Users\\me\\project")).toBe(
+      "C:\\Users\\me\\other\\notes.md",
+    );
+  });
 });
 
 describe("isTerminalLinkActivation", () => {

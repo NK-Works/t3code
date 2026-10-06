@@ -69,6 +69,72 @@ function joinPath(base: string, next: string, separator: "/" | "\\"): string {
   return `${cleanBase}/${next.replace(/^\/+/, "")}`;
 }
 
+/**
+ * Collapses `.` and `..` segments so a joined path is canonical before the
+ * workspace check. Without this, `/home/me/project/../other/notes.md` keeps
+ * the workspace root as a string prefix and misclassifies as a workspace
+ * file instead of a host file.
+ */
+function collapsePathSegments(resolvedPath: string): string {
+  const hadTrailingSeparator = /[\\/]$/.test(resolvedPath);
+
+  const collapse = (segments: string[], allowLeadingDotDot: boolean): string[] => {
+    const output: string[] = [];
+    for (const segment of segments) {
+      if (segment === "" || segment === ".") continue;
+      if (segment === "..") {
+        if (output.length > 0 && output[output.length - 1] !== "..") {
+          output.pop();
+          continue;
+        }
+        if (allowLeadingDotDot) output.push(segment);
+        continue;
+      }
+      output.push(segment);
+    }
+    return output;
+  };
+
+  let normalized: string;
+  if (resolvedPath.startsWith("\\\\")) {
+    const collapsed = collapse(resolvedPath.split(/[\\/]+/).filter(Boolean), false);
+    normalized = `\\\\${collapsed.join("\\")}`;
+  } else {
+    const driveMatch = resolvedPath.match(/^([A-Za-z]:)([\\/])(.*)$/);
+    if (driveMatch?.[1] && driveMatch?.[2] !== undefined) {
+      const drive = driveMatch[1];
+      const rest = driveMatch[3] ?? "";
+      const separator = resolvedPath.includes("\\") ? "\\" : "/";
+      const collapsed = collapse(rest.split(/[\\/]+/), false);
+      normalized = `${drive}${separator}${collapsed.join(separator)}`;
+    } else if (resolvedPath.startsWith("/")) {
+      const collapsed = collapse(resolvedPath.split("/"), false);
+      normalized = `/${collapsed.join("/")}`;
+    } else {
+      const tildePrefix = resolvedPath.startsWith("~/")
+        ? "~/"
+        : resolvedPath.startsWith("~\\")
+          ? "~\\"
+          : "";
+      const body = tildePrefix ? resolvedPath.slice(2) : resolvedPath;
+      const separator = body.includes("\\") && !body.includes("/") ? "\\" : "/";
+      const collapsed = collapse(body.split(/[\\/]+/), true);
+      normalized = `${tildePrefix}${collapsed.join(separator)}`;
+    }
+  }
+
+  if (
+    hadTrailingSeparator &&
+    normalized.length > 0 &&
+    !/[\\/]$/.test(normalized) &&
+    normalized !== "~" &&
+    normalized !== "~/"
+  ) {
+    normalized += normalized.includes("\\") && !normalized.includes("/") ? "\\" : "/";
+  }
+  return normalized;
+}
+
 function inferHomeFromCwd(cwd: string): string | undefined {
   const posixUser = cwd.match(/^\/Users\/([^/]+)/);
   if (posixUser?.[1]) {
@@ -92,16 +158,16 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
   const position = splitFilePathPosition(rawPath);
   const { path } = position;
 
-  let resolvedPath = path;
+  let resolvedPath = collapsePathSegments(path);
   if (path.startsWith("~/")) {
     const home = inferHomeFromCwd(cwd);
     if (home) {
       const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";
-      resolvedPath = joinPath(home, path.slice(2), separator);
+      resolvedPath = collapsePathSegments(joinPath(home, path.slice(2), separator));
     }
   } else if (!isAbsolutePath(path)) {
     const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
-    resolvedPath = joinPath(cwd, path, separator);
+    resolvedPath = collapsePathSegments(joinPath(cwd, path, separator));
   }
 
   return formatFilePathPosition({ ...position, path: resolvedPath });

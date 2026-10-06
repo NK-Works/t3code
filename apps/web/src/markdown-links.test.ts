@@ -77,6 +77,23 @@ describe("rewriteMarkdownFileUriHref", () => {
   });
 });
 
+describe("parent-directory links escaping the workspace", () => {
+  it("treats a parent link escaping the workspace as a host file", () => {
+    expect(resolveMarkdownFileLinkMeta("../other/notes.md", "/home/me/project")).toMatchObject({
+      filePath: "/home/me/other/notes.md",
+      targetPath: "/home/me/other/notes.md",
+      workspaceRelativePath: null,
+    });
+  });
+
+  it("keeps a parent link staying inside the workspace as a workspace file", () => {
+    expect(resolveMarkdownFileLinkMeta("sub/../notes.md", "/home/me/project")).toMatchObject({
+      filePath: "/home/me/project/notes.md",
+      workspaceRelativePath: "notes.md",
+    });
+  });
+});
+
 describe("relative links inside a rendered host file", () => {
   it("anchor to the file's directory while workspace membership follows cwd", () => {
     const meta = resolveMarkdownFileLinkMeta("appendix.md", "/repo", "/tmp/report");
@@ -108,9 +125,9 @@ describe("relative links inside a rendered host file", () => {
     });
     expect(
       resolveInlineCodeFileLinkMeta("./src/index.ts", "/repo", "/repo/packages/a"),
-    ).toMatchObject({ filePath: "/repo/packages/a/./src/index.ts" });
+    ).toMatchObject({ filePath: "/repo/packages/a/src/index.ts" });
     expect(resolveInlineCodeFileLinkMeta("../b/notes.md", "/repo", "/repo/docs/a")).toMatchObject({
-      filePath: "/repo/docs/a/../b/notes.md",
+      filePath: "/repo/docs/b/notes.md",
     });
   });
 

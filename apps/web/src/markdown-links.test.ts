@@ -353,6 +353,51 @@ describe("relative links inside a rendered host file", () => {
   });
 });
 
+describe("inline code paths in a workspace file preview", () => {
+  it("resolves bare paths from the workspace root instead of the file's directory", () => {
+    const meta = resolveInlineCodeFileLinkMeta("docs/ai/design.md", "/project", "/project/docs/ai");
+    expect(meta).toMatchObject({
+      filePath: "/project/docs/ai/design.md",
+      workspaceRelativePath: "docs/ai/design.md",
+    });
+  });
+
+  it("keeps line suffixes when resolving bare preview paths from the workspace root", () => {
+    const meta = resolveInlineCodeFileLinkMeta(
+      "docs/ai/design.md:12",
+      "/project",
+      "/project/docs/ai",
+    );
+    expect(meta).toMatchObject({ filePath: "/project/docs/ai/design.md", line: 12 });
+  });
+
+  it("keeps dot-prefixed preview paths file-relative", () => {
+    expect(
+      resolveInlineCodeFileLinkMeta("./design.md", "/project", "/project/docs/ai"),
+    ).toMatchObject({ filePath: "/project/docs/ai/./design.md" });
+    expect(
+      resolveInlineCodeFileLinkMeta("../shared.md", "/project", "/project/docs"),
+    ).toMatchObject({ filePath: "/project/docs/../shared.md" });
+  });
+
+  it("keeps outside-workspace preview paths file-relative", () => {
+    const meta = resolveInlineCodeFileLinkMeta("docs/guide.md", "/repo", "/tmp/report");
+    expect(meta).toMatchObject({
+      filePath: "/tmp/report/docs/guide.md",
+      workspaceRelativePath: null,
+    });
+  });
+
+  it("keeps explicit markdown links file-relative inside a workspace preview", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("docs/ai/design.md", "/project", "/project/docs/ai"),
+    ).toMatchObject({
+      filePath: "/project/docs/ai/docs/ai/design.md",
+      workspaceRelativePath: "docs/ai/docs/ai/design.md",
+    });
+  });
+});
+
 describe("resolveInlineCodeFileLinkMeta", () => {
   it("links relative paths with file extensions", () => {
     expect(

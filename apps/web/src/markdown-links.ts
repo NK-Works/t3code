@@ -84,6 +84,13 @@ export function resolveMarkdownFileLinkTarget(
  * `origin/main`) rather than deliberate link destinations, so auto-linking
  * them demands stronger path evidence than an explicit markdown link does:
  * an unambiguous path prefix, a file extension, or a :line suffix.
+ *
+ * When a workspace file is previewed, `baseDir` is that file's directory
+ * while `cwd` is the workspace root. Bare inline code paths (`docs/ai/design.md`)
+ * resolve from the workspace root because prose usually names them from there;
+ * `./` and `../` (or `~/`) paths stay file-relative, as do paths in files
+ * outside the workspace. Explicit markdown links/images always stay
+ * file-relative via `resolveMarkdownFileLinkMeta`.
  */
 export function resolveInlineCodeFileLinkMeta(
   codeText: string,
@@ -93,7 +100,23 @@ export function resolveInlineCodeFileLinkMeta(
   const candidate = inlineCodeFilePathCandidate(codeText);
   if (candidate === null) return null;
 
-  return resolveMarkdownFileLinkMeta(candidate, cwd, baseDir);
+  return resolveMarkdownFileLinkMeta(
+    candidate,
+    cwd,
+    resolveInlineCodeBaseDir(candidate, cwd, baseDir),
+  );
+}
+
+function resolveInlineCodeBaseDir(
+  candidate: string,
+  cwd?: string,
+  baseDir: string | undefined = cwd,
+): string | undefined {
+  if (!cwd || !baseDir || baseDir === cwd) return baseDir;
+  if (!isRelativeFilePath(candidate)) return baseDir;
+  if (/^\.\.?\//.test(candidate) || candidate.startsWith("~/")) return baseDir;
+  if (workspaceRelativeFilePath(baseDir, cwd) === null) return baseDir;
+  return cwd;
 }
 
 export function resolveMarkdownFileLinkMeta(

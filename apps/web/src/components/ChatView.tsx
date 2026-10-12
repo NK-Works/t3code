@@ -5225,8 +5225,6 @@ export default function ChatView(props: ChatViewProps) {
         );
       }
 
-      if (!isElectron) return updateResult;
-
       const scriptId = input.keybindingCommand
         ? projectScriptIdFromCommand(input.keybindingCommand)
         : null;

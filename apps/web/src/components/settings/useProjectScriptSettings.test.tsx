@@ -5,7 +5,7 @@ import type {
   ServerSettings,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act, useEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -23,6 +23,7 @@ const stubs = vi.hoisted(() => ({
   upsertKeybinding: vi.fn(),
   removeKeybinding: vi.fn(),
   toastAdd: vi.fn(),
+  settingsWrite: true,
 }));
 
 vi.mock("../../state/server", () => ({
@@ -40,6 +41,10 @@ vi.mock("../../state/use-atom-command", () => ({
 
 vi.mock("../../state/entities", () => ({
   useProjects: () => [],
+}));
+
+vi.mock("../../state/session", () => ({
+  readEnvironmentScope: () => stubs.settingsWrite,
 }));
 
 vi.mock("../ui/toast", () => ({
@@ -75,6 +80,7 @@ function scriptInput(overrides?: Partial<NewProjectScriptInput>): NewProjectScri
     icon: "play",
     runOnWorktreeCreate: false,
     waitForSetup: false,
+    runOnSettle: false,
     keybinding: "mod+k",
     previewUrl: null,
     autoOpenPreview: false,
@@ -121,6 +127,7 @@ beforeEach(() => {
   stubs.upsertKeybinding.mockReset();
   stubs.removeKeybinding.mockReset();
   stubs.toastAdd.mockReset();
+  stubs.settingsWrite = true;
   stubs.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
   stubs.upsertKeybinding.mockResolvedValue(AsyncResult.success(undefined));
   stubs.removeKeybinding.mockResolvedValue(AsyncResult.success(undefined));
@@ -195,5 +202,20 @@ describe("useProjectScriptSettings action shortcuts", () => {
     expect(result._tag).toBe("Failure");
     expect(stubs.upsertKeybinding).not.toHaveBeenCalled();
     expect(stubs.removeKeybinding).not.toHaveBeenCalled();
+  });
+
+  it("fails with a clear scope error instead of silently dropping the save", async () => {
+    stubs.settingsWrite = false;
+    const hook = renderHook(targetsWith([], [] as ResolvedKeybindingsConfig));
+
+    const result = await submitCurrent(hook, null, scriptInput());
+
+    expect(result._tag).toBe("Failure");
+    expect(stubs.updateSettings).not.toHaveBeenCalled();
+    expect(stubs.upsertKeybinding).not.toHaveBeenCalled();
+    expect(stubs.removeKeybinding).not.toHaveBeenCalled();
+    expect(stubs.toastAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Failed to save project actions" }),
+    );
   });
 });
